@@ -45,6 +45,12 @@
 
     本脚本刻意不 import tools.py —— 导出链不该为了找路径反过来依赖 Python。
 
+   ⚠️ 不要并发跑。LibreOffice 无头实例共用同一个 UserInstallation 配置目录,
+   同时起两个会互相踢掉,表现为"未能生成 PDF"但没有任何报错输出。
+
+   -BaseName 只影响**输出**文件名。LibreOffice 本身总是按源文件名产出 PDF,
+   脚本内部会按源名找到产物再改名,所以传任意 BaseName 都可以。
+
     编码要求:.ps1 必须存成 **UTF-8 with BOM**。PowerShell 5.1 对无 BOM 的
     .ps1 会按系统 ANSI 代码页读,本文件里的中文提示会全部乱码。
 #>
@@ -128,6 +134,12 @@ Write-Host ""
 
 # ---- 阶段 1:PPTX -> PDF(矢量) ----
 $profile = "file:///" + (($env:TEMP + "\lo_export_profile") -replace '\\', '/')
+
+# LibreOffice **总是按源文件名**输出 PDF,它不认识 -BaseName。
+# 所以先按源名找产物,再改名成 $BaseName.pdf —— 直接去找 $BaseName.pdf 是
+# 找不到的(-BaseName 一旦显式传值就会报"未能生成 PDF")。
+$srcBase = [IO.Path]::GetFileNameWithoutExtension($Pptx)
+$loPdf   = Join-Path $OutDir ($srcBase + ".pdf")
 $pdfPath = Join-Path $OutDir ($BaseName + ".pdf")
 
 $soArgs = @('--headless', '--norestore', "-env:UserInstallation=$profile",
@@ -138,11 +150,28 @@ $ErrorActionPreference = 'Continue'
 & $soffice @soArgs 2>$null | ForEach-Object { Write-Host "  $_" }
 $ErrorActionPreference = 'Stop'
 
-if (-not (Test-Path -LiteralPath $pdfPath)) {
+if (-not (Test-Path -LiteralPath $loPdf)) {
     # LibreOffice 偶尔输出到别处,兜底找一下
-    $found = Get-ChildItem -LiteralPath $OutDir -Filter ($BaseName + ".pdf") -File -ErrorAction SilentlyContinue
-    if ($found) { $pdfPath = $found.FullName } else { throw "LibreOffice 未能生成 PDF,导出失败。" }
+    $found = Get-ChildItem -LiteralPath $OutDir -Filter ($srcBase + ".pdf") -File -ErrorAction SilentlyContinue
+    if ($found) {
+        $loPdf = $found.FullName
+    } else {
+        throw @"
+LibreOffice 未能生成 PDF,导出失败。
+
+可能的原因:
+  1. **另一个导出正在跑** —— LibreOffice 无头实例共用同一个 UserInstallation
+     配置目录(见脚本里的 -env:UserInstallation),同时起两个会互相踢掉。
+     等前一个跑完再试,别并发。
+  2. 输入 pptx 打不开或损坏 —— 先用 PowerPoint / LibreOffice 手动打开确认。
+  3. 转换进程被留下 —— 任务管理器里结束 soffice.bin 后重试。
+
+手动复现转换过程:
+  & "$soffice" --headless --norestore --convert-to pdf --outdir "$OutDir" "$Pptx"
+"@
+    }
 }
+if ($loPdf -ne $pdfPath) { Move-Item -LiteralPath $loPdf -Destination $pdfPath -Force }
 $pdfKB = [math]::Round((Get-Item -LiteralPath $pdfPath).Length / 1KB, 1)
 Write-Host "[1/2] PDF  (矢量)     -> $([IO.Path]::GetFileName($pdfPath))  $pdfKB KB"
 
