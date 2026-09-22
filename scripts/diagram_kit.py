@@ -124,6 +124,101 @@ MUTED = RGBColor(0x55, 0x55, 0x55)    # 次级文字(箭头标注、说明)
 FONT_LATIN = "Arial"
 FONT_EA = "微软雅黑"
 
+# 带箭头的线段最小可见杆长(英寸)。低于这个值,箭头会退化成"孤立的小三角" ——
+# 只看得见箭尖看不见杆,读者无法判断它从哪儿指过来。见 SKILL.md「图形质量要求」。
+MIN_SHAFT_IN = 0.14
+
+# 总线定位用的两个偏好值。总线两侧未必都带箭头 —— bus() 里带箭头的是支线,
+# fan_in() 里带箭头的是干线。默认位置要**保证带箭头那一段够长**,另一段随它短。
+_BUS_NEAR = 0.12                  # 不带箭头那一段的理想长度
+_BUS_HEAD = MIN_SHAFT_IN + 0.02   # 带箭头那一段的硬下限
+
+
+def _bus_y(y_src, y_dst):
+    """总线该放在哪个 y。
+
+    默认取中点(两侧长度均等,最好看)。但 bus() 的支线和 fan_in() 的干线都是
+    **靠目标那一侧**带箭头,所以一旦中点到目标的距离短于最小杆长,就得把总线
+    往源那头挪 —— 宁可让不带箭头的一段短,也不能让箭头退化成孤立小三角。
+    """
+    return max(y_src + 0.02, min((y_src + y_dst) / 2, y_dst - _BUS_HEAD))
+
+_OPPOSITE = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
+
+
+class Node:
+    """box() / label() / group() 的返回值:记住自己画在哪儿的句柄,单位英寸。
+
+    存在的唯一理由:**让箭头精确落在边框上**。
+
+    手写 `d.arrow(x + 0.60, ...)` 时,0.60 是盒子半宽 —— 一旦改了盒子宽度,
+    箭头就和边框脱开、或者插进框里半截。这是示意图里最常见的低级瑕疵,而且在
+    缩略图上看不出来。改用 Node 取点,结构上就不可能算错:
+
+        a = d.box(0.5, 0.5, 1.6, 0.5, "输入")
+        b = d.box(3.0, 0.5, 1.6, 0.5, "输出")
+        d.arrow(*a.right, *b.left)      # a 的右边框中点 → b 的左边框中点
+
+    更省事的是 d.connect(a, b) —— 连边都不用选。
+    """
+
+    __slots__ = ("x", "y", "w", "h", "shape", "is_container")
+
+    def __init__(self, x, y, w, h, shape=None, is_container=False):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.shape = shape          # 底层 pptx 形状,需要精细操作时用
+        self.is_container = is_container   # group() 画的容器框,audit 不查它的重叠
+
+    # ---- 中心 ----
+    @property
+    def cx(self):
+        return self.x + self.w / 2
+
+    @property
+    def cy(self):
+        return self.y + self.h / 2
+
+    # ---- 四条边的中点,返回 (x, y) 元组,可直接用 * 展开给 arrow() ----
+    @property
+    def top(self):
+        return (self.cx, self.y)
+
+    @property
+    def bottom(self):
+        return (self.cx, self.y + self.h)
+
+    @property
+    def left(self):
+        return (self.x, self.cy)
+
+    @property
+    def right(self):
+        return (self.x + self.w, self.cy)
+
+    def port(self, side, t=0.5):
+        """边上任意一点。
+
+        side: 'top' / 'bottom' / 'left' / 'right'
+        t   : 沿这条边的比例。 top/bottom 按 x 方向 0→1(0 是左端);
+              left/right 按 y 方向 0→1(0 是上端)。
+        """
+        if side == "top":
+            return (self.x + self.w * t, self.y)
+        if side == "bottom":
+            return (self.x + self.w * t, self.y + self.h)
+        if side == "left":
+            return (self.x, self.y + self.h * t)
+        if side == "right":
+            return (self.x + self.w, self.y + self.h * t)
+        raise ValueError(f"side 只能是 top/bottom/left/right,收到 {side!r}")
+
+    def __repr__(self):
+        return (f"Node(x={self.x:.3f}, y={self.y:.3f}, "
+                f"w={self.w:.3f}, h={self.h:.3f})")
+
 
 class Diagram:
     """一张 16:9 画布,坐标单位统一用英寸,原点在左上角。
@@ -150,6 +245,7 @@ class Diagram:
         self.font_ea = font_ea
         self.theme = theme if theme in THEMES else "tinted"
         self.th = THEMES[self.theme]
+        self._nodes = []            # 所有 box()/group() 产生的 Node,供 audit() 自查
 
     # ---------- 基本元素 ----------
 
@@ -157,6 +253,9 @@ class Diagram:
             size=None, bold=None, filled=True, align=PP_ALIGN.CENTER,
             line_w=None, bg=None, text_color=None, pad=None):
         """加一个带文字的盒子。style 取 STYLES 的键;filled=False 用浅色填充。
+
+        返回 **Node 句柄**(不是底层形状)—— 拿它的 .top/.bottom/.left/.right
+        去连箭头,别手算半宽。需要底层 pptx 形状时用 node.shape。
 
         size / bold / line_w / bg / text_color / pad 不传时按 theme 取默认。
 
@@ -202,7 +301,9 @@ class Diagram:
         tf.margin_left = tf.margin_right = Inches(pad)
         tf.margin_top = tf.margin_bottom = Inches(0.02)
         self._set_text(shp, text, size, bold, text_color, align)
-        return shp
+        node = Node(x, y, w, h, shp)
+        self._nodes.append(node)
+        return node
 
     def arrow(self, x1, y1, x2, y2, style="dark", width=None, dashed=False, head=True):
         """直线连接符,可带三角箭头。dashed=True 为虚线(常用于反馈/可选路径)。"""
@@ -243,6 +344,125 @@ class Diagram:
         _strip_style(conn)
         return conn
 
+    # ---------- 连接(箭头精确贴边框) ----------
+
+    @staticmethod
+    def _pick_side(a, b):
+        """按两个盒子中心的相对位置选边:水平距离大就走左右,否则走上下。"""
+        dx = b.cx - a.cx
+        dy = b.cy - a.cy
+        if abs(dx) >= abs(dy):
+            return "right" if dx >= 0 else "left"
+        return "bottom" if dy >= 0 else "top"
+
+    def connect(self, a, b, side_a=None, side_b=None, style="dark",
+                width=None, dashed=False, head=True):
+        """从 a 的**边框**连到 b 的**边框** —— 两端都由 Node 几何算出。
+
+        这是"箭头连边框"的根治手段:端点不可能是手算的,所以既不会脱框、
+        也不会插进框里。自动选边规则见 _pick_side();要强制走某条边就传
+        side_a / side_b('top'/'bottom'/'left'/'right')。
+
+        返回箭头形状。注意返回的不是 Node —— 箭头本身不做为连线端点使用。
+        """
+        if side_a is None:
+            side_a = self._pick_side(a, b)
+        if side_b is None:
+            side_b = _OPPOSITE[side_a]
+        x1, y1 = a.port(side_a)
+        x2, y2 = b.port(side_b)
+        return self.arrow(x1, y1, x2, y2, style=style, width=width,
+                          dashed=dashed, head=head)
+
+    def bus(self, source, targets, axis="v", bus_at=None, style="dark",
+            width=None, dashed=False):
+        """树形分叉:源框 → 干线 → 一条总线 → 每个目标一条支线贴上边框。
+
+        复刻参考图里那种"一个算子分发给多个并行步骤"的画法 —— 比各自画直线
+        干净得多,也符合"正交走线、避免斜箭头"的要求。
+
+        axis='v' : 源在上、目标在下,总线水平(最常用)
+        axis='h' : 源在左、目标在右,总线竖直
+        bus_at   : 总线所在坐标(英寸)。不传就取源边框与目标边框的中点 ——
+                   中点能保证干线长度和支线长度大致相当,不会出现"孤立小三角"。
+
+        返回本次画出的所有箭头(干线 + 总线 + 各支线),便于需要时再调整。
+        """
+        if not targets:
+            return []
+        made = []
+        kw = dict(style=style, width=width, dashed=dashed)
+
+        if axis == "v":
+            y_src = source.bottom[1]
+            y_dst = min(t.top[1] for t in targets)
+            if bus_at is None:
+                bus_at = _bus_y(y_src, y_dst)
+            # 干线:源框下边框 → 总线(无箭头,它只是导线)
+            made.append(self.arrow(source.bottom[0], y_src,
+                                   source.bottom[0], bus_at, head=False, **kw))
+            # 总线:横跨所有支线落点。必须把干线的接入点也算进去,
+            # 否则源框不在目标跨度内时总线会短一截,干线悬空。
+            xs = [t.cx for t in targets] + [source.bottom[0]]
+            made.append(self.arrow(min(xs), bus_at, max(xs), bus_at,
+                                   head=False, **kw))
+            # 支线:总线 → 各目标的上边框中点
+            for t in targets:
+                made.append(self.arrow(t.cx, bus_at, *t.top, **kw))
+        else:
+            x_src = source.right[0]
+            x_dst = min(t.left[0] for t in targets)
+            if bus_at is None:
+                bus_at = (x_src + x_dst) / 2
+            made.append(self.arrow(x_src, source.right[1],
+                                   bus_at, source.right[1], head=False, **kw))
+            ys = [t.cy for t in targets] + [source.right[1]]
+            made.append(self.arrow(bus_at, min(ys), bus_at, max(ys),
+                                   head=False, **kw))
+            for t in targets:
+                made.append(self.arrow(bus_at, t.cy, *t.left, **kw))
+        return made
+
+    def fan_in(self, dest, sources, axis="v", bus_at=None, style="dark",
+               width=None, dashed=False):
+        """`bus()` 的镜像:多个来源汇入同一个目标。
+
+        各来源引出一条支线 → 汇到一条总线 → 一条干线带箭头进入目标边框。
+        和 bus() 配合,就是「分叉 → 并行处理 → 汇聚」三板斧。
+
+        axis / bus_at 含义同 bus()。返回本次画出的所有箭头。
+        """
+        if not sources:
+            return []
+        made = []
+        kw = dict(style=style, width=width, dashed=dashed)
+
+        if axis == "v":
+            y_src = max(s.bottom[1] for s in sources)
+            y_dst = dest.top[1]
+            if bus_at is None:
+                bus_at = _bus_y(y_src, y_dst)
+            xs = [s.cx for s in sources] + [dest.top[0]]
+            for s in sources:
+                made.append(self.arrow(s.cx, s.bottom[1], s.cx, bus_at,
+                                       head=False, **kw))
+            made.append(self.arrow(min(xs), bus_at, max(xs), bus_at,
+                                   head=False, **kw))
+            made.append(self.arrow(dest.top[0], bus_at, *dest.top, **kw))
+        else:
+            x_src = max(s.right[0] for s in sources)
+            x_dst = dest.left[0]
+            if bus_at is None:
+                bus_at = (x_src + x_dst) / 2
+            ys = [s.cy for s in sources] + [dest.left[1]]
+            for s in sources:
+                made.append(self.arrow(s.right[0], s.cy, bus_at, s.cy,
+                                       head=False, **kw))
+            made.append(self.arrow(bus_at, min(ys), bus_at, max(ys),
+                                   head=False, **kw))
+            made.append(self.arrow(bus_at, dest.left[1], *dest.left, **kw))
+        return made
+
     def label(self, x, y, w, text, size=None, color=None, italic=None,
               align=PP_ALIGN.CENTER, bold=False):
         """纯文字标签(无边框),常放在箭头上标注意义。
@@ -251,11 +471,12 @@ class Diagram:
         """
         size = self.th["label_size"] if size is None else size
         italic = self.th["italic"] if italic is None else italic
-        tb = self.slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(0.32))
+        h = 0.32
+        tb = self.slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
         tf = tb.text_frame
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
         self._set_text(tb, text, size, bold, color or MUTED, align, italic=italic, frame=tf)
-        return tb
+        return Node(x, y, w, h, tb)
 
     def caption(self, text, size=12, y=None):
         """图注,默认贴底部居中。"""
@@ -280,6 +501,109 @@ class Diagram:
         cells = self.grid(total_cols)
         x, w = cells[col]
         return self.box(x, y, w, h, text, **kw)
+
+    def group(self, nodes, label=None, pad=0.14, label_size=None,
+              style="gray"):
+        """给一组盒子套一个虚线容器并加标签。
+
+        用来表达"这几个东西属于同一类"(参考图里的「基学习器集合」「预测输出」)。
+        容器**无填充**,只画虚线描边,并且会移到最底层 —— 否则会盖住里面的盒子。
+
+        pad 是容器相对最外层盒子的四周留白。标签画在容器上方。
+        """
+        if not nodes:
+            return None
+        x0 = min(n.x for n in nodes) - pad
+        y0 = min(n.y for n in nodes) - pad
+        x1 = max(n.x + n.w for n in nodes) + pad
+        y1 = max(n.y + n.h for n in nodes) + pad
+        w, h = x1 - x0, y1 - y0
+
+        st = STYLES.get(style, STYLES["gray"])
+        edge = DARK if self.th["mono"] else st["fill"]
+        shp = self.slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x0), Inches(y0),
+            Inches(w), Inches(h))
+        shp.fill.background()                    # 无填充,只留描边
+        shp.line.color.rgb = edge
+        shp.line.width = Pt(self.th["line_w"])
+        shp.shadow.inherit = False
+        _strip_style(shp)
+        ln = shp.line._get_or_add_ln()
+        # 用**点线**而不是虚线:虚线已经用来表示"反馈/可选路径"这类流程语义了。
+        # 容器的边框是分组语义,两者样式必须能一眼分开,否则读者会把容器边
+        # 当成一条流程线。
+        ln.append(ln.makeelement(qn("a:prstDash"), {"val": "sysDot"}))
+        self._send_to_back(shp)
+
+        if label:
+            self.label(x0, y0 - 0.26, w, label,
+                       size=label_size or self.th["label_size"],
+                       color=DARK, italic=False)
+        node = Node(x0, y0, w, h, shp, is_container=True)
+        self._nodes.append(node)
+        return node
+
+    # ---------- 自查 ----------
+
+    def audit(self, min_shaft=MIN_SHAFT_IN):
+        """检查版面里的常见低级瑕疵,返回问题描述列表(空列表 = 通过)。
+
+        查三件事:
+          1. **盒子重叠** —— 两个 box() 的矩形相交
+          2. **箭头杆太短** —— 带箭头的连线短于 min_shaft,会退化成孤立的小三角
+          3. **盒子出画布** —— 内容跑到画布外,导出时被裁掉
+
+        audit() 看不出"箭头有没有连到边框" —— 用 connect()/bus()/port() 画的话,
+        那是结构上就成立的,不需要检查;手算坐标画的话它也查不出来,只能靠肉眼。
+        所以真正该做的是:**别手算坐标**。
+        """
+        issues = []
+        # 容器框天生会"包住"里面的盒子,那不是缺陷,是它的职责 —— 排除掉
+        boxes = [n for n in self._nodes
+                 if n.w > 0 and n.h > 0 and not n.is_container]
+
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                ox = min(a.x + a.w, b.x + b.w) - max(a.x, b.x)
+                oy = min(a.y + a.h, b.y + b.h) - max(a.y, b.y)
+                if ox > 0.01 and oy > 0.01:
+                    issues.append(f"盒子重叠 {ox:.3f}\" x {oy:.3f}\":"
+                                  f"{a!r} 与 {b!r}")
+
+        tol = 0.005
+        for shp in self.slide.shapes:
+            # 只看连接符(arrow/bus 画的线);文本框和自动图形没有 begin_x
+            for attr in ("begin_x", "begin_y", "end_x", "end_y"):
+                if not hasattr(shp, attr):
+                    break
+            else:
+                w = abs(shp.end_x.inches - shp.begin_x.inches)
+                h = abs(shp.end_y.inches - shp.begin_y.inches)
+                # 只有带箭头的线段才受"最小杆长"约束 —— 干线和总线是没有箭头的
+                # 导线,再短也无所谓,否则会误报
+                ln = shp.line._get_or_add_ln()
+                if ln.find(qn("a:tailEnd")) is not None and max(w, h) < min_shaft:
+                    issues.append(
+                        f"箭头太短 ({w:.3f}\", {h:.3f}\") —— 低于最小杆长 "
+                        f"{min_shaft}\",箭头会退化成孤立的小三角,读者看不出它从哪来")
+                if w > tol and h > tol:
+                    issues.append(
+                        f"斜箭头 ({w:.3f}\", {h:.3f}\") —— 走线应统一到水平或垂直,"
+                        f"斜率不一致会让整张图显得乱")
+
+        for n in boxes:
+            if n.x < -0.001 or n.y < -0.001 \
+                    or n.x + n.w > self.w + 0.001 or n.y + n.h > self.h + 0.001:
+                issues.append(f"盒子出画布: {n!r}(画布 {self.w}\" x {self.h}\")")
+        return issues
+
+    def _send_to_back(self, shp):
+        """把形状移到最底层(spTree 的前两个子元素是分组属性,内容从索引 2 开始)。"""
+        spTree = self.slide.shapes._spTree
+        el = shp._element
+        spTree.remove(el)
+        spTree.insert(2, el)
 
     # ---------- 内部 ----------
 
