@@ -96,25 +96,44 @@ sys.path.insert(0, os.path.expanduser("~/.claude/skills/ppt-diagram/scripts"))
 from diagram_kit import Diagram
 
 # 画布宽度取论文版心 —— 这样字号就是最终印刷字号
-d = Diagram(width_in=5.77, height_in=2.60)
+d = Diagram(width_in=5.77, height_in=2.90)
 
-Y, H = 0.45, 0.55
-d.rbox(0, Y, H, "数据输入\n与预处理", 3, style="blue")
-d.rbox(1, Y, H, "模型建立\n与求解",   3, style="green")
-d.rbox(2, Y, H, "结果分析\n与验证",   3, style="blue")
+# box() 返回 Node 句柄,箭头靠它取边框坐标 —— 不用手算半宽
+a = d.box(0.16, 0.30, 2.60, 0.60, "y_{1:T}\n观测序列", style="sky")
+b = d.box(3.01, 0.30, 2.60, 0.60, "x_0 ~ p(x_0)\n初始状态先验", style="sky")
+m = d.box(0.16, 1.30, 5.45, 0.55,
+          "状态空间模型  x_{t+1} = f(x_t) + w_t", style="blue", size=7.5)
 
-cells = d.grid(3, start=0.15, end=5.62, gap=0.45)
-for i in range(2):
-    x1 = cells[i][0] + cells[i][1]
-    x2 = cells[i + 1][0]
-    d.arrow(x1, Y + H/2, x2, Y + H/2)
-    d.label((x1+x2)/2 - 0.225, Y + H/2 + 0.05, 0.45,
-            "特征提取" if i == 0 else "误差评估", size=7)
+# 落点对准源框中线 → 箭头完全竖直(随手取落点会变斜箭头,斜线是"显乱"的主因)
+for src in (a, b):
+    d.arrow(*src.bottom, *m.port("top", (src.cx - m.x) / m.w))
+
+# 一个源分发给多个并行步骤:用 bus(),别各画一条线
+steps = [d.box(0.16 + i * 1.86, 2.20, 1.60, 0.50,
+               f"步骤 {i+1}\n具体算子", style="orange", size=7.5)
+         for i in range(3)]
+d.bus(m, steps)
+
+# 自查:盒子重叠 / 箭头杆过短 / 斜箭头 / 内容出画布
+for issue in d.audit():
+    print("⚠️", issue)
 
 d.save("fig1.pptx")
 ```
 
-完整可运行示例:`python scripts/example_pipeline.py`。
+完整参考版式见 [`scripts/example_figure.py`](scripts/example_figure.py) ——
+五层主链 + 树形分叉 + 汇聚判据 + 虚线回路 + 分组容器,注释逐条对着质量要求写。
+跑 `python scripts/example_pipeline.py` 直接出图。
+
+## 图形质量要求(不只是"好看")
+
+箭头一律**连到边框**(`connect()` 让这条结构上成立,不是靠肉眼对齐);
+带箭头的线段要有最小杆长,否则箭尖孤零零地飘着;走线正交、不用斜箭头;
+框线粗、连接线细;**框内写具体公式/算子而不是"数据输入与预处理"这类泛称**;
+不用投影和渐变。完整清单和理由见
+[SKILL.md「图形质量要求」](SKILL.md#图形质量要求)。
+
+`d.audit()` 会替你查其中可程序化的部分(重叠、短箭头、斜箭头、出画布)。
 
 ## 导出
 
@@ -213,9 +232,10 @@ ppt-diagram/
 ├── docs/                       # README 配图
 └── scripts/
     ├── diagram_kit.py          # 画图 API（核心）
+    ├── example_figure.py       # ★ 参考版式在这 —— 想学怎么画就读它
     ├── tools.py                # 定位 soffice / pdftocairo
     ├── export_figure.ps1       # 导出成图（Windows PowerShell）
-    ├── example_pipeline.py     # 完整可运行示例
+    ├── example_pipeline.py     # 出一张 pptx
     └── style_gallery.py        # 四风格拼版对比
 ```
 

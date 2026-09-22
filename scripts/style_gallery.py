@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-风格对比表:同一版式的图,用 4 种 theme 各渲染一遍,拼成一张对比图。
+"""风格对比表:同一张图用 4 种 theme 各渲染一遍,拼成一张对比图。
 
-为什么要固定几何:同一张图只换 theme、画布与字号不变,比的才是**风格**;
-如果连尺寸一起变,比的是尺寸,选不出想要的东西。
+图本身来自 `example_figure.build()` —— 和 `example_pipeline.py` 出的是同一张。
+**几何完全固定**(画布、字号、内边距一样),只换 theme:这样比的才是风格;
+要是连尺寸一起变,比的是尺寸,选不出想要的东西。
 
 用法:
     python style_gallery.py [输出目录]
-    # 默认输出到 %TEMP%\\diagram_style_gallery\\
+    # 默认输出到系统临时目录下的 diagram_style_gallery/
 
 产出:
     style_<theme>.pptx / .png   —— 单张
@@ -27,7 +27,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from diagram_kit import Diagram, DARK          # noqa: E402
+from example_figure import build               # noqa: E402
 from tools import require_soffice, require_pdftocairo  # noqa: E402
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
@@ -37,49 +37,15 @@ os.makedirs(OUT, exist_ok=True)
 DPI = 200
 
 THEMES = [
-    ("tinted", "① 浅色底（默认）",
-     "原色向白混 82% 的浅底 + 同色系深字。层级靠色块区分，比实心柔和"),
+    ("tinted", "① 浅色底(默认)",
+     "原色向白混 82% 的浅底 + 同色系深字。层级靠色块区分,比实心柔和"),
     ("academic", "② 白底细框",
-     "白底 + 细彩框 + 近黑常规字。最素净，最像期刊插图"),
+     "白底 + 细彩框 + 近黑常规字。最素净,最像期刊插图"),
     ("mono", "③ 纯黑白",
-     "统一黑框 + 浅灰底区分次级框。不依赖颜色，黑白印刷不会丢信息"),
+     "统一黑框 + 浅灰底区分次级框。不依赖颜色,黑白印刷不会丢信息"),
     ("presentation", "④ 汇报风",
-     "实心饱和色块 + 白色粗体字。视觉冲击强，适合答辩 PPT"),
+     "实心饱和色块 + 白色粗体字。视觉冲击强,适合答辩 PPT"),
 ]
-
-# ---- 固定几何:5.77 英寸版心、8pt、0.04 内边距,四个主题完全一致 ----
-W, H = 5.77, 2.60
-SIZE, PAD = 8, 0.04
-Y, BH, GAPX, LBLW = 0.45, 0.55, 0.45, 0.45
-
-
-def build(theme):
-    d = Diagram(width_in=W, height_in=H, theme=theme)
-    bx = lambda *a, **k: d.box(*a, size=SIZE, pad=PAD, **k)   # noqa: E731
-
-    cells = d.grid(3, start=0.15, end=W - 0.15, gap=GAPX)
-    for i, (txt, st) in enumerate([("数据输入\n与预处理", "blue"),
-                                   ("模型建立\n与求解", "green"),
-                                   ("结果分析\n与验证", "blue")]):
-        bx(cells[i][0], Y, cells[i][1], BH, txt, style=st)
-
-    for i in range(2):
-        x1 = cells[i][0] + cells[i][1]
-        x2 = cells[i + 1][0]
-        d.arrow(x1, Y + BH / 2, x2, Y + BH / 2)
-        d.label((x1 + x2) / 2 - LBLW / 2, Y + BH / 2 + 0.05, LBLW,
-                "特征提取" if i == 0 else "误差评估", size=7)
-
-    bx_ = cells[2][0] + cells[2][1] - 0.2
-    d.arrow(bx_, Y + BH, bx_, Y + BH + 0.45, dashed=True, head=False)
-    d.arrow(bx_, Y + BH + 0.45, cells[1][0] + cells[1][1] / 2, Y + BH + 0.45, dashed=True)
-    d.label(cells[1][0], Y + BH + 0.52, cells[1][1], "参数迭代优化",
-            size=7, color=DARK, italic=False)
-
-    bx(0.15, Y + BH + 0.95, W - 0.30, 0.45,
-       "约束条件：计算资源有限、数据含噪声、需在 72 小时内完成",
-       style="gray", filled=False)
-    return d
 
 
 def export_png(pptx, outdir):
@@ -113,7 +79,8 @@ def export_png(pptx, outdir):
 pptxes = []
 for key, _, _ in THEMES:
     p = os.path.join(OUT, f"style_{key}.pptx")
-    build(key).save(p)
+    # 只换 theme,画布与几何都由 example_figure 固定 —— 比的才是风格
+    build(theme=key).save(p)
     pptxes.append(p)
     print("SAVED", p)
 

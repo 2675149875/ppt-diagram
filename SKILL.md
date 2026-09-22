@@ -118,39 +118,49 @@ python "$HOME\.claude\skills\ppt-diagram\scripts\tools.py"
 
 ## 快速上手
 
+**先读 `scripts/example_figure.py`** —— 那才是完整参考版式:五层主链 + 树形分叉 +
+汇聚判据 + 虚线回路 + 分组容器,注释逐条对着「图形质量要求」。
+
+下面是最小骨架,只演示怎么把箭头**连到边框上**:
+
 ```python
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.claude/skills/ppt-diagram/scripts"))
 from diagram_kit import Diagram
 
-# theme 见「风格预设」:tinted(默认)/ academic / mono / presentation
-# 画布宽度取论文版心 —— 这样字号就是最终印刷字号,见「画布尺寸」一节
-d = Diagram(width_in=5.77, height_in=2.60)          # theme 默认 tinted
+# 画布宽度取论文版心 —— 这样字号就是最终印刷字号,见「画布尺寸」
+# 高度按内容算,别硬套:下面内容到 2.70 英寸,所以取 2.90
+d = Diagram(width_in=5.77, height_in=2.90)          # theme 默认 tinted
 
-# 三阶段,网格自动等距排列
-Y, H = 0.45, 0.55
-d.rbox(0, Y, H, "数据输入\n与预处理", 3, style="blue")
-d.rbox(1, Y, H, "模型建立\n与求解",   3, style="green")
-d.rbox(2, Y, H, "结果分析\n与验证",   3, style="blue")
+# box() 返回 Node 句柄,后面靠它取边框坐标
+a = d.box(0.16, 0.30, 2.60, 0.60, "y_{1:T}\n观测序列", style="sky")
+b = d.box(3.01, 0.30, 2.60, 0.60, "x_0 ~ p(x_0)\n初始状态先验", style="sky")
 
-# 箭头 + 下方标注
-cells = d.grid(3, start=0.15, end=5.62, gap=0.45)   # 间隙要留够,见下
-for i in range(2):
-    x1 = cells[i][0] + cells[i][1]
-    x2 = cells[i+1][0]
-    d.arrow(x1, Y + H/2, x2, Y + H/2)
-    d.label((x1+x2)/2 - 0.225, Y + H/2 + 0.05, 0.45,
-            "特征提取" if i == 0 else "误差评估", size=7)
+# 两个输入汇入一个模型:各引一条竖直箭头落到上边框的不同位置。
+# port() 的落点对准源框中线,箭头就完全竖直 —— 别随手取落点,会变成斜箭头
+m = d.box(0.16, 1.30, 5.45, 0.55, "状态空间模型  x_{t+1} = f(x_t) + w_t",
+          style="blue", size=7.5)
+for src in (a, b):
+    d.arrow(*src.bottom, *m.port("top", (src.cx - m.x) / m.w))
 
-# 虚线反馈回路 —— 用多段 arrow 拼直角,别用 elbow(走线不可控)
-bx = cells[2][0] + cells[2][1] - 0.2
-d.arrow(bx, Y + H, bx, Y + H + 0.35, dashed=True, head=False)
-d.arrow(bx, Y + H + 0.35, cells[1][0] + cells[1][1]/2, Y + H + 0.35, dashed=True)
+# 一个源分发给多个并行步骤:用 bus(),别各画一条线
+steps = [d.box(0.16 + i * 1.86, 2.20, 1.60, 0.50,
+               f"步骤 {i+1}\n具体算子", style="orange", size=7.5)
+         for i in range(3)]
+d.bus(m, steps)
+
+# 担心箭头太短 / 盒子重叠 / 斜箭头?跑自查
+for issue in d.audit():
+    print("⚠️", issue)
 
 # 不要加 d.caption(...) —— 见上面「铁律」
+d.save("fig.pptx")
 ```
 
-跑完把 pptx 交给用户微调。完整可运行示例见 `scripts/example_pipeline.py`。
+> 检查箭头有没有贴框,不用靠肉眼:端点坐标 == 对应 Node 的 `.top/.bottom/...` 即可。
+> 用 `connect()` / `bus()` / `port()` 画的话,这是结构上成立的。
+
+跑完把 pptx 交给用户微调。完整示例:`python scripts/example_pipeline.py`。
 
 ---
 
@@ -210,15 +220,51 @@ d.arrow(bx, Y + H + 0.35, cells[1][0] + cells[1][1]/2, Y + H + 0.35, dashed=True
 | 方法 | 说明 |
 |---|---|
 | `Diagram(width_in, height_in, theme, font)` | 建画布。**宽度取论文版心**。代码默认 10 英寸只是为方便随手试用,**正式画图必须显式传 `width_in=`**(见「画布尺寸」)。theme 见「风格预设」:presentation / tinted / academic / mono |
-| `box(x, y, w, h, text, style, shape, size, bold, filled, align, line_w, bg, text_color, pad)` | 带文字的盒子。后六个不传就按 theme 取默认 |
-| `arrow(x1, y1, x2, y2, style, width, dashed, head)` | 直线箭头 |
-| `elbow(x1, y1, x2, y2, ...)` | 肘形折线(绕行关系线) |
-| `label(x, y, w, text, size, color, italic, align, bold)` | 纯文字标签 |
+| `box(x, y, w, h, text, style, shape, size, bold, filled, align, line_w, bg, text_color, pad)` | 带文字的盒子。后六个不传就按 theme 取默认。**返回 Node 句柄** |
+| `arrow(x1, y1, x2, y2, style, width, dashed, head)` | 画一条给定坐标的直线箭头。**能用 Node 取点就别手算** |
+| `connect(a, b, side_a, side_b, ...)` | **从 a 的边框连到 b 的边框**,自动选边。箭头贴框就靠它 |
+| `bus(src, targets, axis, bus_at, ...)` | 树形分叉:干线 + 总线 + 逐条支线贴上各目标边框 |
+| `fan_in(dest, sources, axis, bus_at, ...)` | `bus()` 的镜像:多来源汇聚进一个目标 |
+| `group(nodes, label, pad, style)` | 给一组盒子套**点线**容器(分组语义),可加标签 |
+| `audit()` | 版面自查:盒子重叠、箭头杆过短、斜箭头、内容出画布。**画完跑一遍** |
+| `elbow(x1, y1, x2, y2, ...)` | 肘形折线。⚠️ 走线由渲染器决定,两边可能不一致 —— 优先用多段 `arrow()` 拼 |
+| `label(x, y, w, text, size, color, italic, align, bold)` | 纯文字标签。返回 Node |
 | `caption(text, size, y)` | 图注(默认贴底居中)。**默认不用**,见上面铁律 |
 | `title(text, size, y)` | 图内标题。**默认不用**,见上面铁律 |
 | `grid(n, start, end, gap)` | 把宽度均分 n 列,返回 `[(x, w), ...]` |
 | `rbox(col, y, h, text, total_cols, **kw)` | 按网格放盒子(省去手算坐标) |
 | `save(path)` | 存文件 |
+
+### Node:别手算坐标
+
+`box()` / `label()` / `group()` 返回的都是 **Node 句柄**,记住自己画在哪儿(英寸):
+
+| 属性 | 含义 |
+|---|---|
+| `node.x` `.y` `.w` `.h` | 原始几何 |
+| `node.cx` `.cy` | 中心 |
+| `node.top` `.bottom` `.left` `.right` | **四条边的中点**,返回 `(x, y)` |
+| `node.port(side, t=0.5)` | 边上任意一点,`t` 是沿边比例 |
+| `node.shape` | 底层 pptx 形状(要精细操作时用) |
+
+```python
+obs = d.box(0.55, 0.12, 2.39, 0.38, "y_{1:T}\n观测序列")
+model = d.box(0.55, 0.66, 5.06, 0.42, "状态空间模型")
+d.arrow(*obs.bottom, *model.port("top", 0.24))   # 落在模型上边框的 24% 处
+
+b1 = d.box(...); b2 = d.box(...)
+d.connect(b1, b2)                                 # 连边都不用选
+```
+
+**为什么要这样**:手写 `d.arrow(x + 0.60, ...)` 时,`0.60` 是盒子半宽 ——
+改动盒子尺寸后箭头就和边框脱开,或者插进框里半截。这种瑕疵在缩略图上看不出来,
+印出来才发现。用 Node 取点,结构上就不可能算错。
+
+> `port()` 的落点若取在**正对源框中线**的位置,箭头就是完全竖直的;
+> 随便取个落点会变成斜箭头,而斜箭头是"看起来乱"的主要来源。
+
+调用 `connect()` / `bus()` / `fan_in()` 时,自动选边和总线位置都有默认规则;
+不满意可以传 `side_a` / `side_b` / `bus_at` 覆盖。
 
 **`style`** 取值:`blue` / `orange` / `green` / `sky` / `vermillion` / `purple` / `yellow` / `gray`
 **`shape`** 取值:`rounded`(默认) / `rect` / `ellipse` / `diamond` / `parallelogram` / `cylinder`
@@ -261,7 +307,10 @@ d.box(0.6, 3.35, 5.1, 0.7, "C_t  =  f_t ⊙ C_{t-1}  +  i_t ⊙ g_t", style="gre
 
 ### 配色:Okabe-Ito 色盲友好色板
 
-来源:`scientific-toolkit-skill` 的 `scientific-visualization` 模块(`assets/color_palettes.py`)。这是 Okabe & Ito (2008) 提出的、科学出版最广泛推荐的色盲友好配色 —— 约 8% 的男性有色觉障碍,用这套能保证他们也能区分。
+来源:Okabe, M. & Ito, K. (2008). *Color Universal Design (CUD): How to Make
+Figures and Presentations That Are Friendly to Colorblind People.*
+<https://jfly.uni-koeln.de/color/> —— 科学出版最广泛推荐的色盲友好配色。
+约 8% 的男性有色觉障碍,用这套能保证他们也能区分。
 
 | style 名 | 色值 | | style 名 | 色值 |
 |---|---|---|---|---|
@@ -319,6 +368,71 @@ python "$HOME\.claude\skills\ppt-diagram\scripts\style_gallery.py"
 - 同一张图还要上答辩 PPT → `presentation`(画布改 10in、字号 13)
 
 **对比风格时几何要固定**:同一版式只换 theme、画布与字号不变,否则比的是尺寸不是风格。
+
+---
+
+## 图形质量要求
+
+这一节是**验收标准**。下面的要求来自期刊插图规范与学术示意图实践(来源见文末),
+不是审美偏好 —— 每一条都有具体理由,违反哪条都会让图"看起来业余"。
+
+### 箭头
+
+| 要求 | 为什么 |
+|---|---|
+| **连到边框**,不脱框、不插进框里 | 悬空的箭头读者不知道它从哪来;插进框里则像把框划开了。用 `connect()` / `bus()` / `port()` 画,这条自动成立 |
+| 带箭头的线段要有**最小杆长**(约 0.14 英寸) | 否则只看得见箭尖看不见杆,退化成"孤立的小三角"。`audit()` 会替你查 |
+| 相连两框之间要留够间距(≥ 0.2 英寸) | 太窄就挪框,别硬塞 —— 挤出来的箭头必然短 |
+| **走正交**,避免斜箭头 | 斜率各不相同的斜线是"图显乱"的头号来源。`audit()` 会查 |
+| **一条箭头只表达一种关系** | 同一根线一会儿表示"导致"一会儿表示"传给",读者无法解码 |
+| 不用**双向箭头** | 语义含糊;要互指就画两条 |
+| 全图箭头**样式统一** | 实线=主流程、虚线=反馈/可选路径。别出现第三种含义的实线 |
+| 标注放在**线旁,不压线** | 文字压在线上既难读又难看 |
+
+### 线宽与形状
+
+- **只有两档线宽**:**框线粗、连接线细**(细线约为粗线的 1/2)。
+  `diagram_kit` 的 theme 已按此设好,一般不用动
+- 避免过粗的描边和过大的箭头头部
+- **不用投影、不用渐变**。`_strip_style()` 已经帮你删掉主题投影 —— 自己写
+  代码时注意别把它们加回来
+- **同形同意**:同一形状/颜色始终代表同一类概念。判断框用菱形,处理用圆角矩形
+
+### 布局
+
+- 自上而下 或 从左到右,顺着读图视线
+- **疏密适中,不留大空白**;高宽比协调
+- **同层级元素等宽等距** —— 用 `grid()` 或手算固定间距,别凭感觉摆
+- 各框大小尽量一致,并且**装得下里面的字**
+- 避免"糖葫芦"式一条直线排到底;3~5 个阶段以上就分层或分叉
+- 一幅图只讲一个主题;元素别堆太多
+
+### 文字与内容(「内容充实」的实质)
+
+- **框内写具体内容**:公式、张量名、算子、具体方法名。
+  写"数据输入与预处理"这种泛称,等于什么都没说 —— 换成
+  `y_{1:T} 观测序列`、`θ ← argmax Q(θ)` 才叫图里有信息
+- 同图**字号统一**;缩放后仍可读(见「画布尺寸」)
+- 能用正文/图注说明的别塞进图里,图中文字以少为好
+- 中英文与公式混排时,外文字母的正斜体、大小写与正文保持一致
+
+### 自查
+
+画完跑一遍 `d.audit()`,它会报出**盒子重叠、箭头杆过短、斜箭头、内容出画布**。
+
+但 `audit()` **查不出"箭头有没有连到边框"** —— 用 `connect()` 画的话那是结构上
+成立的,不需要查;手算坐标画的话它也查不出来。所以真正该做的是:**别手算坐标**。
+
+```python
+issues = d.audit()
+for i in issues:
+    print("⚠️", i)
+```
+
+> 调研来源:
+> [arXiv 图形生成规范(箭头-边框连接规则)](https://arxiv.org/pdf/2609.01006) ·
+> [AlterLab 科学示意图 best practices](https://github.com/alterlab-ieu/alterlab-academic-skills) ·
+> [科技论文插图的构思设计及要求](https://jdxb.bjtu.edu.cn/CN/PDF/380)
 
 ---
 
