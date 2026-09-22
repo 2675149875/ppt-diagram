@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.bak
+
+# 生成物:示例 pptx 和导出的图都不入库(docs/ 下的配图是刻意提交的)
+*.pptx
+*.pdf
+*.svg
+
+# export_figure.ps1 的默认输出目录
+out/

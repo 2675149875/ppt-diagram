@@ -1,0 +1,21 @@
+# 这里声明的行尾不是风格偏好,是**能不能跑**的问题。
+
+# Windows 批处理:cmd.exe 逐行解析,存成 LF 会把 `if "%~1"=="" (` 这类
+# 多行块撕成碎片,脚本直接崩。强制任何客户端检出都是 CRLF。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# PowerShell 5.1 对无 BOM 的 .ps1 按系统 ANSI 代码页读,中文提示会全乱码,
+# 所以本仓库的 .ps1 一律存成 UTF-8 with BOM —— 那是文件内容的一部分,
+# 由编辑器保证,git 不需要也不应该去动它。
+*.ps1 text eol=crlf
+
+# 其余文本统一 LF
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
+
+# 这些是二进制,别做任何行尾转换
+*.png binary
+*.jpg binary

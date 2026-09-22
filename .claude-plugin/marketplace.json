@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "ppt-diagram",
+  "owner": {
+    "name": "2675149875",
+    "url": "https://github.com/2675149875"
+  },
+  "description": "Install ppt-diagram as a Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "ppt-diagram",
+      "source": "./",
+      "description": "Generate editable academic schematic figures as PPTX from code, tweak them by hand in PowerPoint, then export print-ready PNG or vector SVG.",
+      "license": "MIT",
+      "keywords": [
+        "diagram",
+        "figure",
+        "pptx",
+        "academic",
+        "paper",
+        "thesis",
+        "flowchart",
+        "svg",
+        "okabe-ito"
+      ]
+    }
+  ]
+}

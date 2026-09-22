@@ -1,0 +1,6 @@
+python-pptx>=1.0.0
+
+# 可选 —— 只有 scripts/style_gallery.py 拼四宫格风格对比图时用到。
+# 其余脚本不需要 Pillow。
+#   pip install Pillow
+# Pillow>=10.0
