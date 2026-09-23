@@ -90,6 +90,25 @@ function Find-Tool {
     return $null
 }
 
+function Find-SofficeFromRegistry {
+    # Explorer 双击/拖拽启动的 cmd 继承不到用户后来加入 PATH 的目录,
+    # 而 LibreOffice 可能装在任意盘符。安装路径会写进注册表,这里最后回退读取。
+    $keys = @(
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\LibreOffice\UNO\InstallPath',
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\LibreOffice\UNO\InstallPath',
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\LibreOffice\LibreOffice\Path'
+    )
+    foreach ($key in $keys) {
+        $installPath = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).'(default)'
+        if (-not $installPath) { continue }
+        foreach ($name in @('soffice.com', 'soffice.exe')) {
+            $candidate = Join-Path $installPath $name
+            if (Test-Path -LiteralPath $candidate) { return $candidate }
+        }
+    }
+    return $null
+}
+
 # ---- 定位依赖 ----
 # 装在非标准位置时,设 PPT_DIAGRAM_SOFFICE / PPT_DIAGRAM_PDFTOCAIRO 指过去,
 # 不用改这个脚本。各 skill 的 scripts/tools.py 认同一组环境变量。
@@ -99,6 +118,7 @@ $soffice = Find-Tool -Name 'soffice' -EnvVar 'PPT_DIAGRAM_SOFFICE' -Candidates @
     "$env:LOCALAPPDATA\Programs\LibreOffice\program\soffice.com",
     "C:\Program Files\LibreOffice\program\soffice.exe"
 )
+if (-not $soffice) { $soffice = Find-SofficeFromRegistry }
 
 $pdftocairo = Find-Tool -Name 'pdftocairo' -EnvVar 'PPT_DIAGRAM_PDFTOCAIRO' -Candidates @(
     "$env:USERPROFILE\.claude\skills\shared\tools\poppler\pdftocairo.exe",

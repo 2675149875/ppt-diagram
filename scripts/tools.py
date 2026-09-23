@@ -7,6 +7,7 @@
     1. 环境变量   PPT_DIAGRAM_SOFFICE / PPT_DIAGRAM_PDFTOCAIRO
     2. PATH       (shutil.which)
     3. 候选目录   (见下方 *_CANDIDATES)
+    4. 注册表     (仅 soffice:读取 LibreOffice 的安装路径)
 
 第 1 条是给你本机那种非标准安装位置用的 —— 装在哪儿就把环境变量指过去,
 不用改代码。第 3 条只是尽量猜得准一点,猜不到就让 require_* 报出装法。
@@ -21,6 +22,10 @@
 import os
 import shutil
 import sys
+try:
+    import winreg
+except ImportError:  # 非 Windows 平台没有 winreg,跨平台调用 tools.py 时仍可工作
+    winreg = None
 
 ENV_SOFFICE = "PPT_DIAGRAM_SOFFICE"
 ENV_PDFTOCAIRO = "PPT_DIAGRAM_PDFTOCAIRO"
@@ -84,11 +89,42 @@ def _find(env_var, names, candidates):
     return None
 
 
+def _soffice_from_registry():
+    """从 LibreOffice 的 Windows 安装注册项读取 soffice 路径。
+
+    Explorer 双击/拖拽启动的 cmd 通常继承不到用户后来加入 PATH 的目录,
+    而 LibreOffice 又可能装在任意盘符。安装路径会写进注册表,这里作为
+    最后的自动回退,避免每台机器都要手设环境变量。
+    """
+    if not _IS_WIN:
+        return None
+
+    keys = [
+        r"SOFTWARE\LibreOffice\UNO\InstallPath",
+        r"SOFTWARE\WOW6432Node\LibreOffice\UNO\InstallPath",
+        r"SOFTWARE\LibreOffice\LibreOffice\Path",
+    ]
+    for subkey in keys:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey) as key:
+                install_path, _ = winreg.QueryValueEx(key, None)
+        except OSError:
+            continue
+        if not install_path:
+            continue
+        for name in ("soffice.com", "soffice.exe"):
+            candidate = os.path.join(install_path, name)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def find_soffice():
     """返回 soffice 的完整路径,找不到返回 None。"""
     names = ["soffice.com", "soffice"] if _IS_WIN else ["soffice"]
     cands = _SOFFICE_WIN + _SOFFICE_POSIX if _IS_WIN else _SOFFICE_POSIX
-    return _find(ENV_SOFFICE, names, cands)
+    path = _find(ENV_SOFFICE, names, cands)
+    return path or _soffice_from_registry()
 
 
 def find_pdftocairo():

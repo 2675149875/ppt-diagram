@@ -75,7 +75,8 @@ git clone https://github.com/2675149875/ppt-diagram.git ~/.claude/skills/ppt-dia
 ### 工具路径不用手改
 
 `soffice` 和 `pdftocairo` 的安装位置因机器而异,所以代码里不写死路径。
-查找顺序是 **环境变量 → PATH → 几个常见安装目录**。装在非标准位置就设环境变量:
+查找顺序是 **环境变量 → PATH → 几个常见安装目录 → Windows 注册表**。
+其中注册表只用来找 LibreOffice 的安装路径。装在非标准位置就设环境变量:
 
 ```powershell
 $env:PPT_DIAGRAM_SOFFICE    = "D:\PortableApps\LibreOffice\program\soffice.com"

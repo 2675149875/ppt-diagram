@@ -91,6 +91,7 @@ print(tw / 914400, "英寸")      # A4 + 3.17cm 边距 → 5.77
 1. **环境变量** —— `PPT_DIAGRAM_SOFFICE` / `PPT_DIAGRAM_PDFTOCAIRO`
 2. **PATH**
 3. 几个常见的安装目录
+4. **Windows 注册表** —— 仅用于找 LibreOffice 的安装路径
 
 装在非标准位置就设环境变量指过去,别改代码:
 
